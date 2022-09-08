@@ -1,10 +1,11 @@
 #![feature(allocator_api)]
 
 use once_cell::sync::OnceCell;
+use std::fmt::Write;
 use std::{
     alloc::{Allocator, GlobalAlloc},
     marker::PhantomData,
-    sync::atomic::{AtomicIsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicIsize, Ordering},
 };
 
 use dashmap::DashMap;
@@ -75,52 +76,68 @@ where
 {
     alloc: A,
     frame_counter: OnceCell<DashMap<Vec<usize>, AtomicIsize>>,
+    disabled: AtomicBool,
 }
 
 impl<A> UnkaiGlobalAlloc<A>
 where
     A: GlobalAlloc,
 {
-    const TRACE_DEPTH: usize = 5;
+    const SKIP_DEPTH: usize = 5;
+    const FETCH_DEPTH: usize = 10;
 
     pub const fn new(alloc: A) -> Self {
         let frame_counter = OnceCell::<DashMap<Vec<usize>, AtomicIsize>>::new();
         Self {
             alloc,
-            // frame_counter: DashMap::new(),
             frame_counter,
+            disabled: AtomicBool::new(false),
         }
     }
 
     pub fn report_addr(&self) -> Vec<(Vec<usize>, isize)> {
-        self.frame_counter
-            .get_or_init(|| DashMap::new())
+        self.disabled.store(true, Ordering::Relaxed);
+        let res = self
+            .frame_counter
+            .get_or_init(DashMap::new)
             .iter()
             .map(|item| (item.key().clone(), item.value().load(Ordering::Relaxed)))
-            .collect()
+            .collect();
+        self.disabled.store(false, Ordering::Relaxed);
+
+        res
     }
 
     pub fn report_symbol(&self) -> Vec<(String, isize)> {
-        self.frame_counter
-            .get_or_init(|| DashMap::new())
+        self.disabled.store(true, Ordering::Relaxed);
+        let res = self
+            .frame_counter
+            .get_or_init(DashMap::new)
             .iter()
             .map(|item| {
                 let ips = item.key();
                 let mut stack = String::new();
                 for ip in ips {
                     backtrace::resolve((*ip) as _, |symbol| {
-                        stack += &format!(
-                            "{:?}:{:?} @ '{:?}'\n",
-                            symbol.filename(),
-                            symbol.lineno(),
-                            symbol.name()
-                        );
+                        if let Some(file_name) = symbol.filename() {
+                            let _ = write!(stack, "{}", file_name.display());
+                        }
+                        if let Some(line_num) = symbol.lineno() {
+                            let _ = write!(stack, ":{:?}", line_num);
+                        }
+                        if let Some(name) = symbol.name() {
+                            let _ = write!(stack, " @ {:?}", name);
+                        }
+                        let _ = writeln!(stack);
                     });
                 }
 
                 (stack, item.value().load(Ordering::Relaxed))
             })
-            .collect()
+            .collect();
+        self.disabled.store(false, Ordering::Relaxed);
+
+        res
     }
 }
 
@@ -130,10 +147,10 @@ where
 {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = self.alloc.alloc(layout);
-        if sampling(ptr) {
-            let frames = partial_trace(Self::TRACE_DEPTH);
+        if !self.disabled.load(Ordering::Relaxed) && sampling(ptr) {
+            let frames = partial_trace(Self::SKIP_DEPTH, Self::FETCH_DEPTH);
             self.frame_counter
-                .get_or_init(|| DashMap::new())
+                .get_or_init(DashMap::new)
                 .entry(frames)
                 .or_default()
                 .fetch_add(layout.size() as isize, Ordering::Relaxed);
@@ -143,10 +160,10 @@ where
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if sampling(ptr) {
-            let frames = partial_trace(Self::TRACE_DEPTH);
+        if !self.disabled.load(Ordering::Relaxed) && sampling(ptr) {
+            let frames = partial_trace(Self::SKIP_DEPTH, Self::FETCH_DEPTH);
             self.frame_counter
-                .get_or_init(|| DashMap::new())
+                .get_or_init(DashMap::new)
                 .entry(frames)
                 .or_default()
                 .fetch_sub(layout.size() as isize, Ordering::Relaxed);
@@ -156,16 +173,22 @@ where
     }
 }
 
-fn partial_trace(depth: usize) -> Vec<usize> {
-    let mut counter = 0;
-    let mut res = Vec::with_capacity(depth);
+fn partial_trace(skip: usize, fetch: usize) -> Vec<usize> {
+    let mut skipped = 0;
+    let mut fetched = 0;
+    let mut res = Vec::with_capacity(fetch);
 
     backtrace::trace(|frame| {
+        if skipped < skip {
+            skipped += 1;
+            return true;
+        }
+
         let ip = frame.ip() as usize;
         res.push(ip);
 
-        counter += 1;
-        counter < depth
+        fetched += 1;
+        fetched < fetch
     });
 
     res

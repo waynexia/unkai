@@ -1,4 +1,3 @@
-#![feature(const_maybe_uninit_zeroed)]
 #![feature(allocator_api)]
 
 use once_cell::sync::OnceCell;

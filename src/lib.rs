@@ -1,3 +1,4 @@
+#![feature(const_maybe_uninit_zeroed)]
 #![feature(allocator_api)]
 
 use once_cell::sync::OnceCell;
@@ -75,27 +76,34 @@ where
     A: GlobalAlloc,
 {
     alloc: A,
-    frame_counter: OnceCell<DashMap<Vec<usize>, AtomicIsize>>,
+    frame_counter: OnceCell<DashMap<Vec<usize, std::alloc::System>, AtomicIsize>>,
     disabled: AtomicBool,
+
+    sample_rate: usize,
+    skip_stack: usize,
+    fetch_stack: usize,
 }
 
 impl<A> UnkaiGlobalAlloc<A>
 where
     A: GlobalAlloc,
 {
-    const SKIP_DEPTH: usize = 5;
-    const FETCH_DEPTH: usize = 10;
-
-    pub const fn new(alloc: A) -> Self {
-        let frame_counter = OnceCell::<DashMap<Vec<usize>, AtomicIsize>>::new();
+    pub const fn new(alloc: A, sample_rate: usize, skip_stack: usize, fetch_stack: usize) -> Self {
+        let frame_counter = OnceCell::<DashMap<Vec<usize, std::alloc::System>, AtomicIsize>>::new();
         Self {
             alloc,
             frame_counter,
             disabled: AtomicBool::new(false),
+
+            sample_rate,
+            skip_stack,
+            fetch_stack,
         }
     }
 
-    pub fn report_addr(&self) -> Vec<(Vec<usize>, isize)> {
+    pub fn report_addr(&self) -> Vec<(Vec<usize, std::alloc::System>, isize)> {
+        let _ = backtrace::Backtrace::new();
+
         self.disabled.store(true, Ordering::Relaxed);
         let res = self
             .frame_counter
@@ -147,36 +155,53 @@ where
 {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = self.alloc.alloc(layout);
-        if !self.disabled.load(Ordering::Relaxed) && sampling(ptr) {
-            let frames = partial_trace(Self::SKIP_DEPTH, Self::FETCH_DEPTH);
-            self.frame_counter
-                .get_or_init(DashMap::new)
-                .entry(frames)
-                .or_default()
-                .fetch_add(layout.size() as isize, Ordering::Relaxed);
+
+        if layout.size() <= 1024 {
+            return ptr;
+        }
+
+        let disabled = self
+            .disabled
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err();
+
+        if !disabled {
+            if sampling(ptr, self.sample_rate) {
+                let frames = partial_trace(self.skip_stack, self.fetch_stack);
+                self.frame_counter
+                    .get_or_init(DashMap::new)
+                    .entry(frames)
+                    .or_default()
+                    .fetch_add(layout.size() as isize, Ordering::Relaxed);
+            }
+            self.disabled.store(false, Ordering::Relaxed);
         }
 
         ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if !self.disabled.load(Ordering::Relaxed) && sampling(ptr) {
-            let frames = partial_trace(Self::SKIP_DEPTH, Self::FETCH_DEPTH);
+        if layout.size() <= 1024 {
+            return;
+        }
+
+        if sampling(ptr, self.sample_rate) {
+            let frames = partial_trace(self.skip_stack, self.fetch_stack);
+
             self.frame_counter
                 .get_or_init(DashMap::new)
-                .entry(frames)
-                .or_default()
-                .fetch_sub(layout.size() as isize, Ordering::Relaxed);
+                .get(&frames)
+                .map(|counter| counter.fetch_sub(layout.size() as isize, Ordering::Relaxed));
         }
 
         self.alloc.dealloc(ptr, layout)
     }
 }
 
-fn partial_trace(skip: usize, fetch: usize) -> Vec<usize> {
+fn partial_trace(skip: usize, fetch: usize) -> Vec<usize, std::alloc::System> {
     let mut skipped = 0;
     let mut fetched = 0;
-    let mut res = Vec::with_capacity(fetch);
+    let mut res = Vec::with_capacity_in(fetch, std::alloc::System);
 
     backtrace::trace(|frame| {
         if skipped < skip {
@@ -194,6 +219,6 @@ fn partial_trace(skip: usize, fetch: usize) -> Vec<usize> {
     res
 }
 
-fn sampling(ptr: *mut u8) -> bool {
-    ((ptr as usize) >> 3) % 99 == 0
+fn sampling(ptr: *mut u8, rate: usize) -> bool {
+    ((ptr as usize) >> 3) % rate == 0
 }

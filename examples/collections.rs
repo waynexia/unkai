@@ -4,9 +4,11 @@ use tikv_jemallocator::Jemalloc;
 use unkai::UnkaiGlobalAlloc;
 
 #[global_allocator]
-static UNKAI: UnkaiGlobalAlloc<Jemalloc> = UnkaiGlobalAlloc::new(Jemalloc {});
+static UNKAI: UnkaiGlobalAlloc<Jemalloc> = UnkaiGlobalAlloc::new(Jemalloc {}, 99, 5, 10);
 
 fn main() {
+    UNKAI.report_addr();
+
     let mut container = Vec::with_capacity(10000);
     for _ in 0..10000 {
         let item = Vec::<usize>::with_capacity(1000);

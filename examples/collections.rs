@@ -4,7 +4,7 @@ use tikv_jemallocator::Jemalloc;
 use unkai::UnkaiGlobalAlloc;
 
 #[global_allocator]
-static UNKAI: UnkaiGlobalAlloc<Jemalloc> = UnkaiGlobalAlloc::new(Jemalloc {}, 99, 5, 10);
+static UNKAI: UnkaiGlobalAlloc<Jemalloc> = UnkaiGlobalAlloc::new(Jemalloc {}, 99, 5, 10, 0);
 
 fn main() {
     UNKAI.report_addr();

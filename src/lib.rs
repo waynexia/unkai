@@ -82,13 +82,20 @@ where
     sample_rate: usize,
     skip_stack: usize,
     fetch_stack: usize,
+    capture_threshold: usize,
 }
 
 impl<A> UnkaiGlobalAlloc<A>
 where
     A: GlobalAlloc,
 {
-    pub const fn new(alloc: A, sample_rate: usize, skip_stack: usize, fetch_stack: usize) -> Self {
+    pub const fn new(
+        alloc: A,
+        sample_rate: usize,
+        skip_stack: usize,
+        fetch_stack: usize,
+        capture_threshold: usize,
+    ) -> Self {
         let frame_counter = OnceCell::<DashMap<Vec<usize, std::alloc::System>, AtomicIsize>>::new();
         Self {
             alloc,
@@ -98,6 +105,7 @@ where
             sample_rate,
             skip_stack,
             fetch_stack,
+            capture_threshold,
         }
     }
 
@@ -156,7 +164,7 @@ where
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = self.alloc.alloc(layout);
 
-        if layout.size() <= 1024 {
+        if layout.size() <= self.capture_threshold {
             return ptr;
         }
 
@@ -181,7 +189,7 @@ where
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if layout.size() <= 1024 {
+        if layout.size() <= self.capture_threshold {
             return;
         }
 

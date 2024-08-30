@@ -1,5 +1,9 @@
 [package]
 name = "unkai"
+description = """
+Unkai is a tool set for Rust's memory allocation APIs mainly focus on tracking
+and conditional analyzing / limiting memory usage.
+"""
 version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/waynexia/unkai"

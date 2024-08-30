@@ -25,6 +25,9 @@ harness = false
 [[example]]
 name = "collections"
 
+[[example]]
+name = "allocator"
+
 [profile.dev]
 debug = true
 

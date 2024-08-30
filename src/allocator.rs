@@ -1,16 +1,31 @@
 use std::{
-    alloc::Allocator,
-    sync::atomic::{AtomicIsize, Ordering},
+    alloc::{Allocator, Global},
+    panic::Location,
+    sync::{
+        atomic::{AtomicIsize, Ordering},
+        Arc,
+    },
 };
 
-/// Entrypoint to use with [`Allocator`].
+pub type UnkaiGlobal = Unkai<Global>;
+
+/// Entrypoint to use with [`Allocator`]. Example usage:
+///
+/// ```rust
+/// # #![feature(allocator_api)]
+/// # use std::alloc::Global;
+/// # use unkai::{UnkaiGlobal, Unkai};
+/// let mut vec_container: Vec<usize, UnkaiGlobal> = Vec::with_capacity_in(10000, Unkai::default());
+/// assert_eq!(vec_container.allocator().report_usage(), 80000);
+/// ```
+///
+/// There is also an example file `examples/allocator.rs` that shows more usages.
 pub struct Unkai<A>
 where
     A: Allocator,
 {
-    file_path: String,
-    line_num: u32,
-    usage: AtomicIsize,
+    caller: &'static Location<'static>,
+    usage: Arc<AtomicIsize>,
     alloc: A,
 }
 
@@ -18,20 +33,31 @@ impl<A> Unkai<A>
 where
     A: Allocator,
 {
-    fn new<S: AsRef<String>>(file_path: S, line_num: u32, alloc: A) -> Self {
+    /// Create a [`Unkai`] allocator with given [`Allocator`] impl.
+    ///
+    /// [`Unkai`] will remember the code place where it was created. This information
+    /// can be retrieved with [`Unkai::report_caller`] method.
+    #[track_caller]
+    pub fn new(alloc: A) -> Self {
         Self {
-            file_path: file_path.as_ref().to_owned(),
-            line_num,
-            usage: AtomicIsize::new(0),
+            caller: Location::caller(),
+            usage: Arc::new(AtomicIsize::new(0)),
             alloc,
         }
     }
 
-    fn report(&self) -> (String, isize) {
-        let caller = format!("{}:{}", self.file_path, self.line_num);
-        let usage = self.usage.load(Ordering::Relaxed);
+    /// Get current allocated memory in bytes.
+    ///
+    /// When [`Unkai`] is [`Clone`]-d, the memory usage is shared between
+    /// two instances. If this is not the desired behavior, please construct
+    /// a new [`Unkai`] instance instead of cloning it.
+    pub fn report_usage(&self) -> isize {
+        self.usage.load(Ordering::Relaxed)
+    }
 
-        (caller, usage)
+    /// Get where the [`Unkai`] instance is constructed.
+    pub fn report_caller(&self) -> &'static Location<'static> {
+        self.caller
     }
 }
 
@@ -54,5 +80,26 @@ where
         self.usage.fetch_sub(size as isize, Ordering::Relaxed);
 
         self.alloc.deallocate(ptr, layout)
+    }
+}
+
+impl<A: Allocator + Clone> Clone for Unkai<A> {
+    fn clone(&self) -> Self {
+        Self {
+            caller: self.caller,
+            usage: self.usage.clone(),
+            alloc: self.alloc.clone(),
+        }
+    }
+}
+
+impl Default for UnkaiGlobal {
+    #[track_caller]
+    fn default() -> Self {
+        Self {
+            caller: Location::caller(),
+            usage: Default::default(),
+            alloc: Global,
+        }
     }
 }

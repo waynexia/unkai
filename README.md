@@ -11,7 +11,7 @@ Allocator proxy with statistics in "stack", "size" and "duration" axis.
     - [ ] Record pointer's lifetime
 - `Allocator`
     - [ ] Tree-structured
-    - [ ] Low-overhead in-use statistics
+    - [x] Low-overhead in-use statistics
 - General
     - [ ] Prometheus integration
     - [ ] Build-in report generation

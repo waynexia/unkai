@@ -25,17 +25,20 @@
 //! ## Use with [`Allocator`]
 //!
 //! Notice that [`Allocator`] only available when the unstable feature `allocator_api`
-//! is enabled via
+//! is enabled via `#![feature(allocator_api)]`. And enabling unstable feature requires
+//! the nigntly channel Rust toolchain.
 //!
-//! ```rust, ignore
-//! #![feature(allocator_api)]
+//! The entrypoint is [`Unkai`]. Example usage:
+//!
+//! ```rust
+//! # #![feature(allocator_api)]
+//! # use std::alloc::Global;
+//! # use unkai::{UnkaiGlobal, Unkai};
+//! let mut vec_container: Vec<usize, UnkaiGlobal> = Vec::with_capacity_in(10000, Unkai::default());
+//! assert_eq!(vec_container.allocator().report_usage(), 80000);
 //! ```
 //!
-//! And enabling unstable feature requires the nigntly channel Rust toolchain.
-//!
-//! The entrypoint is [`Unkai`].
-//!
-//! TODO: example
+//! There is also an example file `examples/allocator.rs` that shows more usages.
 //!
 //! # Tracking allocation
 //!
@@ -50,5 +53,5 @@
 mod allocator;
 mod global_alloc;
 
-pub use allocator::Unkai;
+pub use allocator::{Unkai, UnkaiGlobal};
 pub use global_alloc::UnkaiGlobalAlloc;

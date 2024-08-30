@@ -1,9 +1,13 @@
 [package]
 name = "unkai"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/waynexia/unkai"
+authors = ["Ruihang Xia <unkai@waynest.com>"]
+license = "MIT"
+keywords = ["allocator"]
+categories = ["memory-management"]
+readme = "README.md"
 
 [dependencies]
 backtrace = "0.3.66"
